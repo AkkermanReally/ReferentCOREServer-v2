@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "refferent-core-server"
+version = "2.0.0"
+description = "RCs v2 Orchestrator"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pydantic = "^2.4.2"
+websockets = "^12.0"
+redis = "^5.0.1"
+python-dotenv = "^1.0.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
