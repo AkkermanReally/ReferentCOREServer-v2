@@ -1,12 +1,14 @@
 # rcs/main.py
 import asyncio
 import logging
-from websockets.server import serve
 
 from rcs.settings import settings
 from rcs.engine import PipelineEngine
 from rcs.electrons.logger import LoggerElectron
-from rcs.nucleus.router import nucleus_router
+from rcs.nucleus.router import Router
+from rcs.nucleus.state import RedisState
+from rcs.nucleus.config import ConfigManager
+from rcs.nucleus.handshake import HandshakeManager
 
 
 async def main():
@@ -20,35 +22,39 @@ async def main():
     )
     logger = logging.getLogger("RCs_Main")
 
-    # 2. Define the active electrons for our pipeline.
-    # The order in this list is the order of execution.
+    # 2. Initialize Nucleus components in the correct order
+    logger.info("Initializing Nucleus components...")
+    config_manager = ConfigManager()
+    await config_manager.sync_on_startup() # Must be done before anything else
+
+    state = RedisState()
+
+    # The handshake manager will be created later, but the router needs it.
+    handshake_manager_ref = {"instance": None}
+    router = Router(state, handshake_manager_ref) # type: ignore
+
+    # 3. Define active electrons and initialize the pipeline engine.
     active_electrons = [
         LoggerElectron(),
-        # In the future, we can add more electrons here:
-        # AuthenticationElectron(),
-        # CacheElectron(),
     ]
-
-    # 3. Instantiate the pipeline engine.
-    # It takes our list of electrons and the final nucleus handler.
-    engine = PipelineEngine(
+    pipeline_engine = PipelineEngine(
         electrons=active_electrons,
-        nucleus_handler=nucleus_router
+        nucleus_router=router
     )
 
-    # 4. Start the WebSocket server.
-    # The `engine.handle_connection` method will be called for each new client.
-    logger.info(f"Starting RefferentCOREServer v2 on {settings.SERVER_HOST}:{settings.SERVER_PORT}")
-    async with serve(
-        engine.handle_connection,
-        settings.SERVER_HOST,
-        settings.SERVER_PORT,
-        max_size=None # Allow large messages
-    ):
-        await asyncio.Future()  # Run forever
+    # 4. Create the Handshake Manager and resolve the reference for the router.
+    handshake_manager = HandshakeManager(config_manager, state, pipeline_engine)
+    handshake_manager_ref["instance"] = handshake_manager
+    router._handshake_manager = handshake_manager # Now the router has the real instance
+
+    # 5. Start the main application loop.
+    logger.info("Starting RefferentCOREServer v2 in Active Orchestrator mode.")
+    # This task runs forever, managing all outgoing connections.
+    await handshake_manager.manage_all_connections()
+
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Server is shutting down.")
+        print("\nServer is shutting down.")
