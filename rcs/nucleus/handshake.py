@@ -2,14 +2,19 @@
 import asyncio
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, TYPE_CHECKING  # ### ИЗМЕНЕНИЕ: Добавляем TYPE_CHECKING
 import websockets
 from websockets.exceptions import ConnectionClosed
 
 from rcs.nucleus.config import ConfigManager, ComponentConfig
-from rcs.engine import PipelineEngine
 from rcs.nucleus.protocol import Envelope
 from rcs.nucleus.state import BaseState
+
+# ### ИЗМЕНЕНИЕ: Начало ###
+# Прячем импорт PipelineEngine от исполнителя Python, оставляя его для проверки типов.
+if TYPE_CHECKING:
+    from rcs.engine import PipelineEngine
+# ### ИЗМЕНЕНИЕ: Конец ###
 
 logger = logging.getLogger(__name__)
 
@@ -17,16 +22,17 @@ logger = logging.getLogger(__name__)
 class HandshakeManager:
     """
     Actively manages the lifecycle of connections to remote components.
-    It initiates, maintains, and retries connections based on the live
-    configuration from ConfigManager.
     """
 
+    # ### ИЗМЕНЕНИЕ: Начало ###
+    # Используем строковый "Forward Reference" для аннотации типа.
     def __init__(
         self,
         config_manager: ConfigManager,
         state: BaseState,
-        pipeline: PipelineEngine
+        pipeline: "PipelineEngine"
     ):
+    # ### ИЗМЕНЕНИЕ: Конец ###
         self.config_manager = config_manager
         self.state = state
         self.pipeline = pipeline
@@ -77,18 +83,14 @@ class HandshakeManager:
                         logger.info(f"[{component_name}] Handshake successful. Listening for messages...")
 
                         async for message in websocket:
-                            # --- MODIFICATION FOR POLICY ADVERTISEMENT ---
-                            # Before passing to the full pipeline, we check for special messages
-                            # that HandshakeManager should handle directly.
                             try:
                                 data = json.loads(message)
-                                # A lightweight check before full validation
                                 if data.get("type") == "policy_advertisement":
                                     logger.info(f"[{component_name}] Received policy advertisement: {data.get('payload')}")
                                     # TODO: Implement logic to update Redis with these policies.
-                                    continue # Don't pass this to the electron pipeline
+                                    continue
                             except (json.JSONDecodeError, TypeError):
-                                pass # Not a valid envelope, will be handled by pipeline
+                                pass
 
                             await self.pipeline.process_message(message, websocket)
 
