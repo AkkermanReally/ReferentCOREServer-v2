@@ -6,7 +6,7 @@ from typing import Dict, Any
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from rcs.nucleus.config import ConfigManager
+from rcs.nucleus.config import ConfigManager, ComponentConfig
 from rcs.engine import PipelineEngine
 from rcs.nucleus.protocol import Envelope
 from rcs.nucleus.state import BaseState
@@ -30,23 +30,19 @@ class HandshakeManager:
         self.config_manager = config_manager
         self.state = state
         self.pipeline = pipeline
-        # Stores active websocket connections managed by this RCs instance
         self.active_connections: Dict[str, websockets.WebSocketClientProtocol] = {}
-        # Stores the asyncio tasks that manage each connection loop
         self.connection_tasks: Dict[str, asyncio.Task] = {}
         logger.info("HandshakeManager (Active Orchestrator) initialized.")
 
     async def manage_all_connections(self):
         """
-        The main entry point. Starts connection management tasks for all
-        enabled components at startup.
+        Starts connection management tasks for all enabled components.
         """
         all_components = self.config_manager.get_all_components()
         for name, config in all_components.items():
-            if not config.disabled:
+            if config.control.enabled:
                 self._start_connection_task_for(name)
 
-        # This coroutine just waits forever. The actual work happens in background tasks.
         await asyncio.Future()
 
     def _start_connection_task_for(self, name: str):
@@ -56,7 +52,6 @@ class HandshakeManager:
         logger.info(f"Starting connection management task for component '{name}'.")
         task = asyncio.create_task(self._manage_connection_loop(name))
         self.connection_tasks[name] = task
-        # Clean up the task from the dict once it's done (e.g., cancelled)
         task.add_done_callback(lambda _: self.connection_tasks.pop(name, None))
 
     async def _manage_connection_loop(self, component_name: str):
@@ -65,46 +60,57 @@ class HandshakeManager:
         handshake, and listen for messages until it's cancelled.
         """
         while True:
+            reconnect_delay = 10 # Default delay
             try:
                 config = self.config_manager.get_component_config(component_name)
-                if not config or config.disabled:
+                if not config or not config.control.enabled:
                     logger.warning(f"Stopping connection loop for '{component_name}' as it is now disabled.")
                     break
 
-                async with websockets.connect(config.uri) as websocket:
+                async with websockets.connect(config.connection.uri) as websocket:
                     logger.info(f"[{component_name}] Connection established.")
-                    is_successful = await self._perform_handshake(websocket, component_name, config.auth_token)
+                    is_successful = await self._perform_handshake(websocket, component_name, config.connection.auth_token)
 
                     if is_successful:
-                        # Success! Store the connection and register the component globally
                         self.active_connections[component_name] = websocket
                         await self.state.register_component(component_name)
                         logger.info(f"[{component_name}] Handshake successful. Listening for messages...")
-                        # This loop passes all incoming messages to the pipeline
+
                         async for message in websocket:
+                            # --- MODIFICATION FOR POLICY ADVERTISEMENT ---
+                            # Before passing to the full pipeline, we check for special messages
+                            # that HandshakeManager should handle directly.
+                            try:
+                                data = json.loads(message)
+                                # A lightweight check before full validation
+                                if data.get("type") == "policy_advertisement":
+                                    logger.info(f"[{component_name}] Received policy advertisement: {data.get('payload')}")
+                                    # TODO: Implement logic to update Redis with these policies.
+                                    continue # Don't pass this to the electron pipeline
+                            except (json.JSONDecodeError, TypeError):
+                                pass # Not a valid envelope, will be handled by pipeline
+
                             await self.pipeline.process_message(message, websocket)
 
             except asyncio.CancelledError:
                 logger.info(f"Connection loop for '{component_name}' is being cancelled.")
                 break
             except (ConnectionRefusedError, ConnectionClosed, OSError) as e:
-                logger.warning(f"[{component_name}] Connection error: {type(e).__name__}. Retrying in 10 seconds.")
+                logger.warning(f"[{component_name}] Connection error: {type(e).__name__}. Retrying in {reconnect_delay} seconds.")
             except Exception as e:
                 logger.error(f"[{component_name}] Unexpected error in connection loop: {e}", exc_info=True)
             finally:
-                # Cleanup after any connection attempt, successful or not
                 if component_name in self.active_connections:
                     del self.active_connections[component_name]
                     await self.state.unregister_component(component_name)
 
-            await asyncio.sleep(10) # Wait before retrying
+            await asyncio.sleep(reconnect_delay)
         logger.info(f"Connection management loop for '{component_name}' has terminated.")
 
 
     async def _perform_handshake(self, websocket, component_name: str, auth_token: str) -> bool:
         """Performs the handshake protocol with a newly connected component."""
         try:
-            # We don't implement the full secrets protocol yet, just the handshake.
             handshake_msg = Envelope(
                 type="handshake",
                 return_from="RefferentCOREServer",
@@ -115,10 +121,8 @@ class HandshakeManager:
             response_raw = await asyncio.wait_for(websocket.recv(), timeout=10.0)
             response = Envelope.model_validate(json.loads(response_raw))
 
-            # A component can ask for secrets or confirm immediately
             if response.type == "handshake_confirmed":
                 return True
-            # We will add the "secrets" logic here in a future step.
             else:
                 logger.warning(f"[{component_name}] Handshake failed. Unexpected response type: {response.type}")
                 return False

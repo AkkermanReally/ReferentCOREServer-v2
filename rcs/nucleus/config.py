@@ -9,14 +9,28 @@ from rcs.utils.redis_client import get_redis_client
 logger = logging.getLogger(__name__)
 
 
-class ComponentConfig(BaseModel):
-    """Pydantic model for a single remote component's configuration."""
+# --- Pydantic Models for Configuration ---
+# By defining strict models, we ensure data integrity from the start.
+
+class ConnectionConfig(BaseModel):
     uri: str
     auth_token: str
-    disabled: bool = False
-    # We can add more component-specific settings here in the future
-    # max_concurrent_requests: int = 5
 
+class ControlConfig(BaseModel):
+    enabled: bool
+
+class MetadataConfig(BaseModel):
+    owner: Optional[str] = None
+    description: Optional[str] = None
+
+class ComponentConfig(BaseModel):
+    """The canonical model for a component's full configuration."""
+    connection: ConnectionConfig
+    control: ControlConfig
+    metadata: MetadataConfig
+
+
+# --- The ConfigManager Itself ---
 
 class ConfigManager:
     """
@@ -30,9 +44,9 @@ class ConfigManager:
 
     async def sync_on_startup(self, bootstrap_file_path: str = "remote_components.json"):
         """
-        Performs initial synchronization.
-        Reads a bootstrap file. If a component's config doesn't exist in Redis,
-        it creates it using the data from the file.
+        Performs initial synchronization from a bootstrap file to Redis.
+        This only has an effect if the configuration for a component does not
+        already exist in Redis.
         """
         logger.info("Starting initial configuration sync with Redis...")
         try:
@@ -50,21 +64,25 @@ class ConfigManager:
 
             if not await self._redis.exists(key):
                 logger.warning(f"Config for '{name}' not found in Redis. Creating from bootstrap file...")
-                # Pydantic model validates the data from the file
                 try:
+                    # Pydantic validates the structure of the data from the file
                     initial_config = ComponentConfig(**data)
-                    await self._redis.hset(key, mapping=initial_config.model_dump())
+                    # We store the config as a single JSON string in a Redis Hash
+                    # to preserve its structure.
+                    await self._redis.hset(key, "data", initial_config.model_dump_json())
                 except Exception as e:
-                    logger.error(f"Invalid data for '{name}' in bootstrap file: {e}")
+                    logger.error(f"Invalid data structure for '{name}' in bootstrap file: {e}")
                     continue
 
             # Load the current config from Redis into the in-memory cache
-            stored_config_raw = await self._redis.hgetall(key)
-            if stored_config_raw:
-                # Redis stores bools as "True"/"False", so we need to parse them
-                stored_config_raw["disabled"] = stored_config_raw.get("disabled", "false").lower() == "true"
-                self.configs[name] = ComponentConfig(**stored_config_raw)
-
+            stored_config_json = await self._redis.hget(key, "data")
+            if stored_config_json:
+                try:
+                    self.configs[name] = ComponentConfig.model_validate_json(stored_config_json)
+                except Exception as e:
+                    logger.error(f"Could not parse config for '{name}' from Redis: {e}")
+            else:
+                logger.error(f"Config for '{name}' was expected in Redis but not found!")
 
         logger.info(f"Sync complete. Loaded {len(self.configs)} component configurations.")
 
