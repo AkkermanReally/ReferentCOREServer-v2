@@ -12,6 +12,11 @@ websockets = "^12.0"
 redis = "^5.0.1"
 python-dotenv = "^1.0.0"
 
+# --- ВОТ ПРАВИЛЬНЫЙ БЛОК ---
+pydantic-settings = "^2.11.0"
+[[tool.poetry.packages]]
+include = "rcs"
+
 
 [build-system]
 requires = ["poetry-core"]
