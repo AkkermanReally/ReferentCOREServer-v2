@@ -5,6 +5,9 @@ services:
   rcs:
     build: .
     container_name: rcs_server
+    ports:
+      - "8080:8080"
+    # ### ИЗМЕНЕНИЕ: Конец ###
     depends_on:
       - redis
     environment:
@@ -12,13 +15,8 @@ services:
       - REDIS_PORT=6379
     networks:
       - persona_network
-    # ### ИЗМЕНЕНИЕ: Начало ###
-    # Добавляем эту секцию, чтобы ws://host.docker.internal работал на всех платформах, включая Linux.
-    # 'host-gateway' - это специальное значение, которое Docker заменяет
-    # на внутренний IP-адрес хост-машины.
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # ### ИЗМЕНЕНИЕ: Конец ###
 
   # Сервис Redis
   redis:

@@ -1,36 +1,42 @@
 # rcs/nucleus/registry.py
 import logging
-from typing import Dict
+from typing import Dict, Any, TYPE_CHECKING
 from websockets.server import WebSocketServerProtocol
 from websockets.client import WebSocketClientProtocol
 
+if TYPE_CHECKING:
+    from rcs.electrons.authenticator import AuthenticationElectron
+    
 logger = logging.getLogger(__name__)
-
-# A union type to represent both client and server websockets
 AnyWebSocket = WebSocketServerProtocol | WebSocketClientProtocol
 
 class ConnectionRegistry:
-    """
-    A simple in-memory registry for all active websocket connections
-    (both from clients and to components) on this server instance.
-    """
-    def __init__(self):
+
+    def __init__(self, auth_electron: "AuthenticationElectron"):
         self._connections: Dict[str, AnyWebSocket] = {}
+        self._ws_to_name: Dict[AnyWebSocket, str] = {}
+        self._auth_electron = auth_electron
         logger.info("ConnectionRegistry initialized.")
 
     def register(self, name: str, websocket: AnyWebSocket):
-        """Registers a named connection."""
         self._connections[name] = websocket
+        self._ws_to_name[websocket] = name # ### ИЗМЕНЕНИЕ ###
         logger.info(f"[Registry] Connection '{name}' registered.")
 
     def unregister(self, name: str) -> AnyWebSocket | None:
-        """Removes a named connection and returns it if it existed."""
         if name in self._connections:
             ws = self._connections.pop(name)
+            self._ws_to_name.pop(ws, None)
+            self._auth_electron.handle_disconnect(name)
             logger.info(f"[Registry] Connection '{name}' unregistered.")
             return ws
         return None
 
     def get(self, name: str) -> AnyWebSocket | None:
-        """Retrieves a connection by its name."""
         return self._connections.get(name)
+
+    def unregister_by_websocket(self, websocket: AnyWebSocket):
+        """Finds the name associated with a websocket and unregisters it."""
+        name = self._ws_to_name.get(websocket)
+        if name:
+            self.unregister(name)

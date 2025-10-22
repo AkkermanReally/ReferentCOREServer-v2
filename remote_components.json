@@ -1,28 +1,17 @@
 {
-  "SimpleEchoService": {
-    "connection": {
-      "uri": "ws://host.docker.internal:9001",
-      "auth_token": "ECHO_SECRET_TOKEN"
-    },
-    "control": {
-      "enabled": true
-    },
-    "metadata": {
-      "owner": "team-alpha",
-      "description": "A simple service that echoes back any text payload."
-    }
+  "WorkerComponent": {
+    "connection": { "uri": "ws://host.docker.internal:9001", "auth_token": "WORKER_SECRET_TOKEN" },
+    "control": { "enabled": true },
+    "metadata": {}
   },
-  "ChainedOrchestrator": {
-    "connection": {
-      "uri": "ws://host.docker.internal:9003",
-      "auth_token": "CHAIN_SECRET_TOKEN"
-    },
-    "control": {
-      "enabled": true
-    },
-    "metadata": {
-      "owner": "team-beta",
-      "description": "Orchestrates calls between other services."
-    }
+  "OrchestratorComponent": {
+    "connection": { "uri": "ws://host.docker.internal:9002", "auth_token": "ORCHESTRATOR_SECRET_TOKEN" },
+    "control": { "enabled": true },
+    "metadata": {}
+  },
+  "SecretRequesterComponent": {
+    "connection": { "uri": "ws://host.docker.internal:9003", "auth_token": "SECRETS_COMPONENT_TOKEN" },
+    "control": { "enabled": true },
+    "metadata": {}
   }
 }

@@ -6,7 +6,8 @@ from websockets.server import WebSocketServerProtocol
 
 from rcs.electrons.base import BaseElectron
 from rcs.nucleus.protocol import Envelope
-from rcs.nucleus.registry import AnyWebSocket
+from rcs.nucleus.registry import AnyWebSocket, ConnectionRegistry
+from rcs.nucleus.config import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +20,19 @@ class AuthenticationElectron(BaseElectron):
     Authenticates external clients upon connection.
     It does not authenticate trusted components.
     """
-    def __init__(self):
-        # A set of authenticated websocket identities (component/client names)
-        self._authenticated_identities: Set[str] = set()
+    def __init__(self, registry: ConnectionRegistry, config_manager: ConfigManager):
+        self._registry = registry
+        self._config_manager = config_manager
+        self._authenticated_clients: Set[str] = set()
         logger.info("AuthenticationElectron initialized.")
 
     def is_authenticated(self, name: str) -> bool:
         return name in self._authenticated_identities
+
+    def handle_disconnect(self, name: str):
+        """Callback to clean up the authenticated state when a client disconnects."""
+        self._authenticated_clients.discard(name)
+        logger.info(f"[Auth] Cleaned up session for disconnected client '{name}'.")
 
     async def process(
         self,
@@ -39,38 +46,29 @@ class AuthenticationElectron(BaseElectron):
         source = envelope.return_from
 
         # If already authenticated, just pass through
-        if self.is_authenticated(source):
+        if source in self._config_manager.get_all_components():
+            # Это VIP-гость, он уже прошел проверку. Пропускаем.
             await next_electron()
             return
+        
+        # Шаг 2: Проверяем, является ли источник уже аутентифицированным клиентом.
+        if source in self._authenticated_clients:
+            await next_electron()
+            return
+        # ### ИЗМЕНЕНИЕ: Конец ###
 
-        # Handle the registration message where authentication happens
+        # Шаг 3: Если нет, то это новый клиент, который должен представиться.
         if envelope.type == "module_registration":
             token = envelope.payload.get("auth_token")
-
-            # In our architecture, components connected by HandshakeManager are
-            # pre-authenticated. Clients connecting via Gateway are not.
-            # We need a way to distinguish them. For now, let's assume
-            # if a token is present, it's a client that needs checking.
-            # A better way would be to tag the websocket connection source.
-            
-            is_valid = False
             if token in VALID_CLIENT_TOKENS:
-                is_valid = True
-            
-            # A simple heuristic: if there's no token, we assume it's a component
-            # pre-authenticated by HandshakeManager. This is a simplification.
-            elif token is None:
-                 is_valid = True
-
-
-            if is_valid:
-                logger.info(f"[Auth] Identity '{source}' successfully authenticated.")
-                self._authenticated_identities.add(source)
-                await next_electron()
+                logger.info(f"[Auth] Client '{source}' successfully authenticated.")
+                self._authenticated_clients.add(source)
+                self._registry.register(source, websocket)
+                # Регистрационное сообщение дальше не передаем.
+                return
             else:
-                logger.warning(f"[Auth] Authentication failed for '{source}'. Closing connection.")
+                logger.warning(f"[Auth] Authentication failed for client '{source}'. Closing.")
                 await websocket.close(1008, "Invalid auth token")
         else:
-            # Any message other than registration from an unauthenticated source is an error
-            logger.warning(f"[Auth] Received message from unauthenticated source '{source}'. Closing connection.")
+            logger.warning(f"[Auth] Received non-registration message from unauthenticated client '{source}'. Closing.")
             await websocket.close(1008, "Authentication required")

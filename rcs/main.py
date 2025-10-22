@@ -31,15 +31,19 @@ async def main():
     config_manager = ConfigManager()
     await config_manager.sync_on_startup()
 
+    # Сначала создаем Электроны, которые нужны Ядру
+    authentication_electron = AuthenticationElectron(None, config_manager) # type: ignore
+
+    # Теперь создаем компоненты Ядра, передавая им зависимости
+    registry = ConnectionRegistry(authentication_electron)
+    # Исправляем ссылку в authenticator'е
+    authentication_electron._registry = registry
+
     state = RedisState()
-    registry = ConnectionRegistry()
     router = Router(state, registry)
 
-    # 2. Initialize the pipeline and its electrons
+    # Теперь создаем остальные Электроны
     pipeline_engine_ref = {"instance": None}
-        
-        # ### ИЗМЕНЕНИЕ: Начало ###
-    authentication_electron = AuthenticationElectron()
     transaction_electron = TransactionElectron(pipeline_engine_ref, registry) # type: ignore
     flow_control_electron = FlowControlElectron(config_manager, pipeline_engine_ref) # type: ignore
     
@@ -50,12 +54,8 @@ async def main():
         flow_control_electron,
     ]
 
-    pipeline_engine = PipelineEngine(
-        electrons=active_electrons,
-        nucleus_router=router
-    )
+    pipeline_engine = PipelineEngine(electrons=active_electrons, nucleus_router=router)
     pipeline_engine_ref["instance"] = pipeline_engine
-    # Resolve the references now that the engine exists
     transaction_electron._pipeline = pipeline_engine
     flow_control_electron._pipeline = pipeline_engine
 

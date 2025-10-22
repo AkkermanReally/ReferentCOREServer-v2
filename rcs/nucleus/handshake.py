@@ -38,9 +38,21 @@ class HandshakeManager:
         self.state = state
         self.registry = registry
         self.pipeline = pipeline
-        # self.active_connections больше не нужен, так как мы используем registry
         self.connection_tasks: Dict[str, asyncio.Task] = {}
+        self._secrets_vault = self._load_secrets_vault()
         logger.info("HandshakeManager (Active Orchestrator) initialized.")
+
+    def _load_secrets_vault(self, path: str = "secrets_vault.json") -> Dict[str, Any]:
+        """Loads the secrets vault from a JSON file."""
+        try:
+            with open(path, "r") as f:
+                logger.info(f"Secrets vault loaded successfully from '{path}'.")
+                return json.load(f)
+        except FileNotFoundError:
+            logger.warning(f"Secrets vault file not found at '{path}'. RCs cannot provide secrets.")
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse secrets vault file at '{path}'.")
+        return {}
 
     async def manage_all_connections(self):
         """
@@ -118,30 +130,42 @@ class HandshakeManager:
 
 
     async def _perform_handshake(self, websocket, component_name: str, auth_token: str) -> bool:
-        """Performs the handshake protocol with a newly connected component."""
+        """Performs the multi-stage handshake protocol, including secrets exchange."""
         try:
-            handshake_msg = Envelope(
-                type="handshake",
-                return_from="RefferentCOREServer",
-                payload={"auth_token": auth_token},
-            )
+            handshake_msg = Envelope(type="handshake", return_from="RefferentCOREServer", payload={"auth_token": auth_token})
             await websocket.send(handshake_msg.model_dump_json(by_alias=True))
 
             response_raw = await asyncio.wait_for(websocket.recv(), timeout=10.0)
             response = Envelope.model_validate(json.loads(response_raw))
 
-            if response.type == "handshake_confirmed":
+            if response.type == "secrets":
+                logger.info(f"[{component_name}] is requesting secrets.")
+                required_keys = response.payload.get("required_secrets", [])
+                secrets_to_send = {key: self._secrets_vault.get(key) for key in required_keys if key in self._secrets_vault}
+                
+                secrets_response = Envelope(
+                    type="secrets", return_from="RefferentCOREServer",
+                    request_id=response.request_id, payload=secrets_to_send
+                )
+                await websocket.send(secrets_response.model_dump_json(by_alias=True))
+                
+                final_response_raw = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+                final_response = Envelope.model_validate(json.loads(final_response_raw))
+                if final_response.type == "handshake_confirmed":
+                    return True
+                else:
+                    logger.warning(f"[{component_name}] Handshake failed after secrets. Unexpected response: {final_response.type}")
+                    return False
+
+            elif response.type == "handshake_confirmed":
                 return True
             else:
                 logger.warning(f"[{component_name}] Handshake failed. Unexpected response type: {response.type}")
                 return False
-
-        except asyncio.TimeoutError:
-            logger.error(f"[{component_name}] Handshake timed out. No response from component.")
-            return False
         except Exception as e:
             logger.error(f"[{component_name}] Error during handshake: {e}", exc_info=True)
             return False
+
 
     def get_websocket_for_component(self, component_name: str) -> websockets.WebSocketClientProtocol | None:
         """Retrieves the active websocket for a connected component."""

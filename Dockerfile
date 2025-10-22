@@ -27,7 +27,6 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY ./rcs ./rcs
 COPY ./.env ./.env
 COPY ./remote_components.json ./remote_components.json
+COPY ./secrets_vault.json ./secrets_vault.json
 
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-# Запускаем приложение как модуль, что правильно настраивает пути импорта.
 CMD ["python", "-m", "rcs.main"]
