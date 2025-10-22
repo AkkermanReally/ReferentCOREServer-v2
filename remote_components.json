@@ -1,0 +1,28 @@
+{
+  "SimpleEchoService": {
+    "connection": {
+      "uri": "ws://host.docker.internal:9001",
+      "auth_token": "ECHO_SECRET_TOKEN"
+    },
+    "control": {
+      "enabled": true
+    },
+    "metadata": {
+      "owner": "team-alpha",
+      "description": "A simple service that echoes back any text payload."
+    }
+  },
+  "ChainedOrchestrator": {
+    "connection": {
+      "uri": "ws://host.docker.internal:9003",
+      "auth_token": "CHAIN_SECRET_TOKEN"
+    },
+    "control": {
+      "enabled": true
+    },
+    "metadata": {
+      "owner": "team-beta",
+      "description": "Orchestrates calls between other services."
+    }
+  }
+}

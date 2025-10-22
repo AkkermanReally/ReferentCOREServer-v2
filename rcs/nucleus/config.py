@@ -23,11 +23,19 @@ class MetadataConfig(BaseModel):
     owner: Optional[str] = None
     description: Optional[str] = None
 
+
+class PolicyConfig(BaseModel):
+    """Defines the operational policies for a component."""
+    max_concurrent_requests: int = 5
+    timeout_seconds: int = 30
+    reconnect_delay_seconds: int = 10
+
 class ComponentConfig(BaseModel):
     """The canonical model for a component's full configuration."""
     connection: ConnectionConfig
     control: ControlConfig
     metadata: MetadataConfig
+    policy: PolicyConfig = Field(default_factory=PolicyConfig)
 
 
 # --- The ConfigManager Itself ---
@@ -85,6 +93,23 @@ class ConfigManager:
                 logger.error(f"Config for '{name}' was expected in Redis but not found!")
 
         logger.info(f"Sync complete. Loaded {len(self.configs)} component configurations.")
+
+    async def update_component_policy(self, component_name: str, policy_data: dict):
+        """Updates the policy for a component in Redis and in the local cache."""
+        if component_name not in self.configs:
+            logger.warning(f"Attempted to update policy for unknown component '{component_name}'.")
+            return
+
+        try:
+            new_policy = PolicyConfig(**policy_data)
+            self.configs[component_name].policy = new_policy
+            key = f"rcs:config:{component_name}"
+            await self._redis.hset(key, "data", self.configs[component_name].model_dump_json())
+            logger.info(f"Policy for '{component_name}' successfully updated in Redis and cache.")
+        except Exception as e:
+            logger.error(f"Failed to update policy for '{component_name}': {e}")
+
+
 
     def get_all_components(self) -> Dict[str, ComponentConfig]:
         """Returns the cached dictionary of all component configurations."""

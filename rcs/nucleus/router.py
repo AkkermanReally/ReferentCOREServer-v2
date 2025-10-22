@@ -1,9 +1,8 @@
 # rcs/nucleus/router.py
 import logging
-from websockets.server import WebSocketServerProtocol
 from rcs.nucleus.protocol import Envelope
 from rcs.nucleus.state import BaseState
-from rcs.nucleus.handshake import HandshakeManager
+from rcs.nucleus.registry import ConnectionRegistry, AnyWebSocket
 
 logger = logging.getLogger(__name__)
 
@@ -11,13 +10,13 @@ logger = logging.getLogger(__name__)
 class Router:
     """
     The Nucleus Router. The final destination in the pipeline.
-    It uses the state and handshake managers to forward messages.
+    It uses the state and connection registry to forward messages.
     """
-    def __init__(self, state: BaseState, handshake_manager: HandshakeManager):
+    def __init__(self, state: BaseState, registry: ConnectionRegistry):
         self._state = state
-        self._handshake_manager = handshake_manager
+        self._registry = registry # ### ИЗМЕНЕНИЕ ###
 
-    async def route(self, envelope: Envelope, websocket: WebSocketServerProtocol) -> None:
+    async def route(self, envelope: Envelope, websocket: AnyWebSocket) -> None:
         """
         Routes the envelope to its destination.
         """
@@ -26,7 +25,8 @@ class Router:
             logger.warning(f"Message {envelope.message_id} has no 'return_to' address. Dropping.")
             return
 
-        target_ws = self._handshake_manager.get_websocket_for_component(target)
+        # ### ИЗМЕНЕНИЕ ###: Ищем в едином реестре
+        target_ws = self._registry.get(target)
 
         if target_ws:
             try:
@@ -35,4 +35,4 @@ class Router:
             except Exception as e:
                 logger.error(f"Failed to send message to '{target}': {e}", exc_info=True)
         else:
-            logger.warning(f"Could not find active local connection for target '{target}'. Message {envelope.message_id} dropped.")
+            logger.warning(f"Could not find active connection for target '{target}'. Message {envelope.message_id} dropped.")

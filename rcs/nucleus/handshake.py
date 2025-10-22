@@ -8,6 +8,7 @@ from websockets.exceptions import ConnectionClosed
 
 from rcs.nucleus.config import ConfigManager, ComponentConfig
 from rcs.nucleus.protocol import Envelope
+from rcs.nucleus.registry import ConnectionRegistry
 from rcs.nucleus.state import BaseState
 
 # ### ИЗМЕНЕНИЕ: Начало ###
@@ -30,13 +31,14 @@ class HandshakeManager:
         self,
         config_manager: ConfigManager,
         state: BaseState,
+        registry: ConnectionRegistry,
         pipeline: "PipelineEngine"
     ):
-    # ### ИЗМЕНЕНИЕ: Конец ###
         self.config_manager = config_manager
         self.state = state
+        self.registry = registry
         self.pipeline = pipeline
-        self.active_connections: Dict[str, websockets.WebSocketClientProtocol] = {}
+        # self.active_connections больше не нужен, так как мы используем registry
         self.connection_tasks: Dict[str, asyncio.Task] = {}
         logger.info("HandshakeManager (Active Orchestrator) initialized.")
 
@@ -78,7 +80,8 @@ class HandshakeManager:
                     is_successful = await self._perform_handshake(websocket, component_name, config.connection.auth_token)
 
                     if is_successful:
-                        self.active_connections[component_name] = websocket
+                        # ### ИЗМЕНЕНИЕ ###: Используем реестр
+                        self.registry.register(component_name, websocket)
                         await self.state.register_component(component_name)
                         logger.info(f"[{component_name}] Handshake successful. Listening for messages...")
 
@@ -86,12 +89,15 @@ class HandshakeManager:
                             try:
                                 data = json.loads(message)
                                 if data.get("type") == "policy_advertisement":
-                                    logger.info(f"[{component_name}] Received policy advertisement: {data.get('payload')}")
-                                    # TODO: Implement logic to update Redis with these policies.
+                                    payload = data.get("payload")
+                                    logger.info(f"[{component_name}] Received policy advertisement: {payload}")
+                                    # ### ИЗМЕНЕНИЕ: Начало ###
+                                    if isinstance(payload, dict):
+                                        await self.config_manager.update_component_policy(component_name, payload)
+                                    # ### ИЗМЕНЕНИЕ: Конец ###
                                     continue
                             except (json.JSONDecodeError, TypeError):
                                 pass
-
                             await self.pipeline.process_message(message, websocket)
 
             except asyncio.CancelledError:
@@ -102,8 +108,9 @@ class HandshakeManager:
             except Exception as e:
                 logger.error(f"[{component_name}] Unexpected error in connection loop: {e}", exc_info=True)
             finally:
-                if component_name in self.active_connections:
-                    del self.active_connections[component_name]
+                # ### ИЗМЕНЕНИЕ ###: Используем реестр
+                if self.registry.get(component_name):
+                    self.registry.unregister(component_name)
                     await self.state.unregister_component(component_name)
 
             await asyncio.sleep(reconnect_delay)
