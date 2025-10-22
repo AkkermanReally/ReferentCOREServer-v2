@@ -7,6 +7,7 @@ from websockets.server import WebSocketServerProtocol
 from rcs.electrons.base import BaseElectron
 from rcs.nucleus.protocol import Envelope
 from rcs.engine import PipelineEngine
+from rcs.nucleus.registry import ConnectionRegistry, AnyWebSocket
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +16,9 @@ class TransactionElectron(BaseElectron):
     """
     Manages requester-side validation for distributed transactions.
     """
-    def __init__(self, pipeline: PipelineEngine):
+    def __init__(self, pipeline: PipelineEngine, registry: ConnectionRegistry):
         self._pipeline = pipeline
+        self._registry = registry
         self._pending_validation: Dict[str, Envelope] = {}
         logger.info("TransactionElectron initialized.")
 
@@ -63,36 +65,24 @@ class TransactionElectron(BaseElectron):
         elif verdict_envelope.type == "validation_failed":
             logger.warning(f"[Transaction] Validation failed for request {request_id}. Re-queueing original request.")
             
-            # --- Prepare the request for retry ---
-            # Mark it for high-priority queuing.
+
+            source_name = original_request.return_from
+            source_websocket = self._registry.get(source_name)
+            
+            if not source_websocket or not source_websocket.open:
+                logger.error(
+                    f"[Transaction] Cannot re-queue request {request_id}. "
+                    f"The original requester '{source_name}' is disconnected."
+                )
+                # Here we could potentially send an event to a monitoring system.
+                return
+
             if original_request.meta is None: original_request.meta = {}
             original_request.meta["is_priority_retry"] = True
 
-            # TODO: Implement max_retries logic here.
-            # We could increment a 'retry_count' in the meta field and check it.
-
-            # Re-inject the original request at the beginning of the pipeline.
-            # We need a websocket object. Since this verdict came from the original
-            # requester, we can assume it's still connected.
-            # This is a simplification; a more robust system would look up the websocket.
-            # For now, we know the source of the verdict is the destination of the retry confirmation.
-            # This is a conceptual simplification. In a real system, we'd need a way to get the websocket.
-            # Let's assume for now that the pipeline has a way to handle this.
-            # The easiest way is to re-route it back to the original client to re-send.
-            # A better way is for the pipeline to handle it internally.
-            
-            # HACK: For now, we assume a websocket is not needed to re-process an internal message.
-            # Let's adjust the pipeline to handle this.
-            # For now, let's just log it. A proper re-injection needs more thought.
-            
-            # The correct way: Re-inject into the pipeline.
-            # The original websocket isn't relevant because the message isn't coming from
-            # a live socket, but from the TransactionElectron itself.
-            # The pipeline needs to know how to route this.
-            
-            # The easiest implementation is for the transaction electron to put it directly
-            # into the FlowControlElectron's queue. This creates coupling.
-            
-            # Let's stick to the pipeline. We will need to adapt the pipeline entrypoint.
-            # For now, let's just log and prepare for the next step.
-            logger.warning("RE-INJECTION LOGIC TO BE IMPLEMENTED IN PIPELINE")
+            logger.info(f"Re-injecting request {request_id} into the pipeline on behalf of '{source_name}'.")
+            # Re-inject the original request message using the live websocket of the requester.
+            await self._pipeline.process_message(
+                original_request.model_dump_json(by_alias=True),
+                source_websocket
+            )

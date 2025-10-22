@@ -35,11 +35,10 @@ async def main():
     router = Router(state, registry)
 
     # 2. Initialize the pipeline and its electrons
-    # ### CORRECTION: Define the placeholder ref *before* using it. ###
     pipeline_engine_ref = {"instance": None}
     
-    transaction_electron = TransactionElectron(pipeline_engine_ref) # type: ignore
-    flow_control_electron = FlowControlElectron(config_manager, pipeline_engine_ref) # type: ignore
+    transaction_electron = TransactionElectron(pipeline_engine_ref, registry) 
+    flow_control_electron = FlowControlElectron(config_manager, pipeline_engine_ref)
     
     active_electrons = [
         LoggerElectron(),
@@ -51,10 +50,8 @@ async def main():
         electrons=active_electrons,
         nucleus_router=router
     )
-    # Now that the engine is created, resolve the reference.
     pipeline_engine_ref["instance"] = pipeline_engine
-    
-    # And properly set the references in the electrons
+    # Resolve the references now that the engine exists
     transaction_electron._pipeline = pipeline_engine
     flow_control_electron._pipeline = pipeline_engine
 
