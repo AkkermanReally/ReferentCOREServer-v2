@@ -7,6 +7,7 @@ from rcs.engine import PipelineEngine
 from rcs.electrons.logger import LoggerElectron
 from rcs.electrons.flow_control import FlowControlElectron
 from rcs.electrons.transaction import TransactionElectron
+from rcs.electrons.authenticator import AuthenticationElectron
 from rcs.nucleus.router import Router
 from rcs.nucleus.state import RedisState
 from rcs.nucleus.config import ConfigManager
@@ -36,12 +37,15 @@ async def main():
 
     # 2. Initialize the pipeline and its electrons
     pipeline_engine_ref = {"instance": None}
-    
-    transaction_electron = TransactionElectron(pipeline_engine_ref, registry) 
-    flow_control_electron = FlowControlElectron(config_manager, pipeline_engine_ref)
+        
+        # ### ИЗМЕНЕНИЕ: Начало ###
+    authentication_electron = AuthenticationElectron()
+    transaction_electron = TransactionElectron(pipeline_engine_ref, registry) # type: ignore
+    flow_control_electron = FlowControlElectron(config_manager, pipeline_engine_ref) # type: ignore
     
     active_electrons = [
         LoggerElectron(),
+        authentication_electron,
         transaction_electron,
         flow_control_electron,
     ]
