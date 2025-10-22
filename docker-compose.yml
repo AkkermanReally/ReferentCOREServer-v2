@@ -3,46 +3,30 @@ version: '3.8'
 services:
   # Наш сервис RefferentCOREServer
   rcs:
-    # Указываем Docker собрать образ из Dockerfile в текущей директории
     build: .
-    # Название контейнера для удобства
     container_name: rcs_server
-    # Пробрасываем порты, если нам нужно будет подключаться к RCs извне контейнера
-    # (пока не нужно, но оставим для будущего шлюза)
-    # ports:
-    #   - "8080:8080"
-    # Указываем, что наш сервис зависит от Redis.
-    # Docker-compose сначала запустит Redis и только потом RCs.
     depends_on:
       - redis
-    # Переменные окружения. Они переопределят значения из .env файла.
-    # Это ключевой момент: мы говорим RCs искать Redis не на 'localhost',
-    # а по имени сервиса 'redis', которое Docker сам разрешит в нужный IP-адрес.
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-    # Подключаем к общей сети
     networks:
       - persona_network
+    # ### ИЗМЕНЕНИЕ: Начало ###
+    # Добавляем эту секцию, чтобы ws://host.docker.internal работал на всех платформах, включая Linux.
+    # 'host-gateway' - это специальное значение, которое Docker заменяет
+    # на внутренний IP-адрес хост-машины.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # ### ИЗМЕНЕНИЕ: Конец ###
 
   # Сервис Redis
   redis:
-    # Используем официальный, готовый образ Redis
     image: "redis:7-alpine"
     container_name: rcs_redis
-    # Подключаем к общей сети
     networks:
       - persona_network
-    # (Опционально) Если мы хотим, чтобы данные в Redis сохранялись между перезапусками
-    # volumes:
-    #   - redis_data:/data
 
-# Определяем общую сеть для наших сервисов
 networks:
   persona_network:
     driver: bridge
-
-# (Опционально) Определяем том для персистентности Redis
-# volumes:
-#   redis_data:
-#     driver: local
