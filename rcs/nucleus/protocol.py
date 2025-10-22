@@ -31,6 +31,8 @@ class Envelope(BaseModel):
         "handshake_confirmed",
         "module_registration", # For clients to register themselves
         "error_manifest_registration",
+        "validation_confirmed",
+        "validation_failed",
     ] = Field(..., description="The type of the message, determining its purpose.")
 
     return_from: str = Field(..., description="The name of the component sending the message.")
@@ -41,5 +43,5 @@ class Envelope(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc),
         description="The UTC timestamp of when the message was created."
     )
-
+    meta: Optional[Dict[str, Any]] = Field(None, description="A dictionary for metadata, flags, and operational parameters.")
     payload: Dict[str, Any] = Field(..., description="A dictionary containing the actual data of the message.")

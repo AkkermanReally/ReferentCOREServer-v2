@@ -46,15 +46,25 @@ class FlowControlElectron(BaseElectron):
             limit = self._config_manager.get_component_config(target).policy.max_concurrent_requests
 
             if self._active_requests[target] < limit:
-                self._active_requests[target] += 1
-                logger.info(f"[FlowControl] Forwarding command to '{target}'. Active: {self._active_requests[target]}/{limit}")
-                await next_electron()
+                    self._active_requests[target] += 1
+                    logger.info(f"[FlowControl] Forwarding command to '{target}'. Active: {self._active_requests[target]}/{limit}")
+                    await next_electron()
             else:
-                self._queues[target].append((envelope, websocket))
-                logger.warning(
-                    f"[FlowControl] Queueing command for '{target}'. Limit of {limit} reached. "
-                    f"Queue size: {len(self._queues[target])}"
-                )
+                # Check if this is a high-priority retry from the TransactionElectron
+                is_priority = envelope.meta and envelope.meta.get("is_priority_retry")
+                
+                if is_priority:
+                    self._queues[target].appendleft((envelope, websocket))
+                    logger.warning(
+                        f"[FlowControl] Prioritizing and queueing retry for '{target}'. Limit of {limit} reached. "
+                        f"Queue size: {len(self._queues[target])}"
+                    )
+                else:
+                    self._queues[target].append((envelope, websocket))
+                    logger.warning(
+                        f"[FlowControl] Queueing command for '{target}'. Limit of {limit} reached. "
+                        f"Queue size: {len(self._queues[target])}"
+                    )
                 # We DO NOT call next_electron() here, halting the pipeline for this message
 
         elif envelope.type in ["response", "error"]:

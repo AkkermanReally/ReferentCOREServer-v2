@@ -6,6 +6,7 @@ from rcs.settings import settings
 from rcs.engine import PipelineEngine
 from rcs.electrons.logger import LoggerElectron
 from rcs.electrons.flow_control import FlowControlElectron
+from rcs.electrons.transaction import TransactionElectron
 from rcs.nucleus.router import Router
 from rcs.nucleus.state import RedisState
 from rcs.nucleus.config import ConfigManager
@@ -33,34 +34,36 @@ async def main():
     registry = ConnectionRegistry()
     router = Router(state, registry)
 
-    # 2. Create electrons first, but leave dependencies that are not yet created as None.
-    # FlowControlElectron needs the pipeline engine, but it's not created yet.
-    # Мы передадим None и установим его позже.
-    flow_control_electron = FlowControlElectron(config_manager, None) # type: ignore
-
-    # 3. Define the list of active electrons.
+    # 2. Initialize the pipeline and its electrons
+    # ### CORRECTION: Define the placeholder ref *before* using it. ###
+    pipeline_engine_ref = {"instance": None}
+    
+    transaction_electron = TransactionElectron(pipeline_engine_ref) # type: ignore
+    flow_control_electron = FlowControlElectron(config_manager, pipeline_engine_ref) # type: ignore
+    
     active_electrons = [
         LoggerElectron(),
-        flow_control_electron, # Flow control should be near the end of the chain.
+        transaction_electron,
+        flow_control_electron,
     ]
 
-    # 4. Now, create the pipeline engine, passing it the fully formed list of electrons.
     pipeline_engine = PipelineEngine(
         electrons=active_electrons,
         nucleus_router=router
     )
-
-    # 5. Finally, inject the created pipeline engine back into the electron that needs it.
-    # This completes the dependency circle correctly.
+    # Now that the engine is created, resolve the reference.
+    pipeline_engine_ref["instance"] = pipeline_engine
+    
+    # And properly set the references in the electrons
+    transaction_electron._pipeline = pipeline_engine
     flow_control_electron._pipeline = pipeline_engine
-    # ### ИЗМЕНЕНИЕ: Конец ###
 
 
-    # 6. Initialize the main operational managers
+    # 3. Initialize the main operational managers
     handshake_manager = HandshakeManager(config_manager, state, registry, pipeline_engine)
     client_gateway = ClientGateway(registry, pipeline_engine)
 
-    # 7. Create tasks for the main operational loops
+    # 4. Create tasks for the main operational loops
     handshake_task = asyncio.create_task(handshake_manager.manage_all_connections())
     gateway_task = asyncio.create_task(client_gateway.start())
 
